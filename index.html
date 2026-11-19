@@ -13,9 +13,9 @@
   .hud b{display:block;font-size:26px;color:#38bdf8;letter-spacing:0}
   #toast{position:absolute;top:80px;width:100%;text-align:center;color:#fde68a;font-weight:700;
     letter-spacing:.15em;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none}
-  .btns{position:absolute;bottom:22px;left:0;right:0;display:flex;justify-content:space-between;padding:0 20px}
-  .btn{width:130px;height:64px;border-radius:16px;border:2px solid #38bdf8;background:rgba(56,189,248,.15);
-    color:#e0f2fe;font-weight:700;letter-spacing:.15em;font-size:14px}
+  .btns{position:absolute;bottom:22px;left:0;right:0;display:flex;justify-content:space-between;padding:0 14px}
+  .btn{width:100px;height:64px;border-radius:16px;border:2px solid #38bdf8;background:rgba(56,189,248,.15);
+    color:#e0f2fe;font-weight:700;letter-spacing:.1em;font-size:13px}
   .btn:active{background:rgba(56,189,248,.45)}
   #over{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
     background:rgba(2,6,23,.8);color:#e0f2fe;text-align:center}
@@ -27,12 +27,13 @@
 <body>
 <canvas id="c"></canvas>
 <div class="hud">
-  <div>CHAIN RUNNER<div style="opacity:.7;font-size:10px;margin-top:4px">GRAPPLE · SWING · GLIDE</div></div>
+  <div>CHAIN RUNNER<div style="opacity:.7;font-size:10px;margin-top:4px">RUN · JUMP · GRAPPLE</div></div>
   <div style="text-align:right">PLATFORMS<b id="score">0</b></div>
 </div>
 <div id="toast"></div>
 <div class="btns">
   <button class="btn" id="pull">PULL</button>
+  <button class="btn" id="jump">JUMP</button>
   <button class="btn" id="rel">RELEASE</button>
 </div>
 <div id="over">
@@ -45,8 +46,9 @@
 (() => {
   const cv = document.getElementById("c"), ctx = cv.getContext("2d");
   const $ = id => document.getElementById(id);
-  const H = 600, GROUND = 430, GRAV = .45, MAX_RANGE = 440, MIN_ROPE = 50;
-  let W, S, cam, hero, plats, anchors, parts, score, best = 0, pulling, over, toastT;
+  const H = 600, GROUND = 430, GRAV = .45, MAX_RANGE = 440, MIN_ROPE = 50, JUMP = -9.5;
+  let W, S, cam, hero, plats, anchors, obs, parts, score, best = 0, pulling, over, toastT;
+  const run = () => Math.min(2.6 + score * .06, 5);
 
   try { best = +localStorage.getItem("chainBest") || 0; } catch (e) {}
 
@@ -58,7 +60,7 @@
 
   function toast(t) {
     const e = $("toast"); e.textContent = t; e.style.opacity = 1;
-    clearTimeout(toastT); toastT = setTimeout(() => e.style.opacity = 0, 1100);
+    clearTimeout(toastT); toastT = setTimeout(() => e.style.opacity = 0, 1200);
   }
   function burst(x, y, color, n) {
     for (let i = 0; i < n; i++) {
@@ -70,33 +72,55 @@
   function addPlatform() {
     const last = plats[plats.length - 1];
     const gap = 110 + Math.random() * 80 + Math.min(score * 4, 80);
-    const w = 180 + Math.random() * 140;
+    const w = 200 + Math.random() * 160;
     const x = last.x + last.w + gap;
     const y = Math.max(340, Math.min(480, last.y + (Math.random() - .5) * 90));
     plats.push({ x, y, w, counted: false });
-    anchors.push({ x: last.x + last.w + gap / 2, y: Math.min(last.y, y) - 150 - Math.random() * 40 });
+    const ax = last.x + last.w + gap / 2, top = Math.min(last.y, y);
+    anchors.push({ x: ax, y: top - 150 - Math.random() * 40 });
+    if (plats.length < 4) return;
+    // floating mine in the gap
+    if (Math.random() < Math.min(.25 + score * .03, .65))
+      obs.push({ t: "mine", cx: ax + (Math.random() < .5 ? -1 : 1) * (35 + Math.random() * 30),
+                 cy: top - 60 - Math.random() * 50, ph: Math.random() * 6 });
+    // ground obstacles
+    let ox = x + 90;
+    const n = w > 270 ? 2 : 1;
+    for (let i = 0; i < n; i++) {
+      if (ox <= x + w - 80 && Math.random() > .25) {
+        const r = Math.random();
+        if (r < .35) obs.push({ t: "spike", x: ox, y, w: 39 });
+        else if (r < .6) obs.push({ t: "crate", x: ox, y, w: 30 });
+        else obs.push({ t: "saw", x: ox + 30, cx: ox + 30, y, ph: Math.random() * 6, range: 30 });
+      }
+      ox += 120;
+    }
   }
 
   function reset() {
-    plats = [{ x: -200, y: GROUND, w: 500, counted: true }];
-    anchors = []; parts = []; score = 0; pulling = false; over = false;
-    hero = { x: 250, y: GROUND, vx: 0, vy: 0, grounded: true, anchor: null, rope: 0, face: 1, t: 0 };
+    plats = [{ x: -200, y: GROUND, w: 650, counted: true }];
+    anchors = []; obs = []; parts = []; score = 0; pulling = false; over = false;
+    hero = { x: 80, y: GROUND, vx: 2.6, vy: 0, grounded: true, plat: plats[0], anchor: null, rope: 0, t: 0 };
     cam = 0;
     while (plats[plats.length - 1].x < 1800) addPlatform();
     $("score").textContent = 0; $("over").style.display = "none";
-    toast("TAP AN ANCHOR TO GRAPPLE");
+    toast("TAP TO JUMP · TAP ANCHOR TO GRAPPLE");
   }
 
   function attach(a) {
     const d = Math.hypot(hero.x - a.x, hero.y - 18 - a.y);
     if (d > MAX_RANGE) { toast("ANCHOR OUT OF RANGE"); return; }
-    hero.anchor = a; hero.rope = Math.max(MIN_ROPE, d); hero.grounded = false;
+    hero.anchor = a; hero.rope = Math.max(MIN_ROPE, d); hero.grounded = false; hero.plat = null;
     burst(a.x, a.y, "#63f1ff", 18); toast("CHAIN ATTACHED");
   }
   function detach() {
     if (!hero.anchor) return;
     burst(hero.x, hero.y - 18, "#ffd76a", 8);
     hero.anchor = null; toast("CHAIN RELEASED");
+  }
+  function jump() {
+    if (!hero.grounded || over) return;
+    hero.grounded = false; hero.plat = null; hero.vy = JUMP; burst(hero.x, hero.y, "#7dd3fc", 6);
   }
 
   cv.addEventListener("pointerdown", e => {
@@ -109,30 +133,51 @@
       const d = Math.hypot(a.x - px, a.y - py);
       if (d < bd) { bd = d; pick = a; }
     }
-    if (pick) attach(pick);
+    if (pick) attach(pick); else jump();
   });
 
-  const pb = $("pull"), rb = $("rel");
+  const pb = $("pull");
   pb.addEventListener("pointerdown", e => { e.preventDefault(); pulling = true; });
   ["pointerup", "pointerleave", "pointercancel"].forEach(ev => pb.addEventListener(ev, () => pulling = false));
-  rb.addEventListener("pointerdown", e => { e.preventDefault(); detach(); });
+  $("jump").addEventListener("pointerdown", e => { e.preventDefault(); jump(); });
+  $("rel").addEventListener("pointerdown", e => { e.preventDefault(); detach(); });
   addEventListener("keydown", e => {
     if (e.code === "Space") { pulling = true; e.preventDefault(); }
     if (e.code === "KeyE") detach();
+    if (e.code === "ArrowUp" || e.code === "KeyW") jump();
   });
   addEventListener("keyup", e => { if (e.code === "Space") pulling = false; });
   $("again").addEventListener("click", reset);
 
   function endGame() {
     over = true;
+    burst(hero.x, hero.y - 18, "#ff5a7a", 30);
     if (score > best) { best = score; try { localStorage.setItem("chainBest", best); } catch (e) {} }
     $("fs").textContent = score; $("bs").textContent = best; $("over").style.display = "flex";
   }
 
+  function sawX(o) { return o.cx + Math.sin(hero.t * .03 + o.ph) * o.range; }
+  function mineY(o) { return o.cy + Math.sin(hero.t * .04 + o.ph) * 40; }
+
+  function hit() {
+    const h = hero, a = h.x - 6, b = h.x + 6, c = h.y - 36, d = h.y;
+    for (const o of obs) {
+      let x1, x2, y1, y2;
+      if (o.t === "spike") { x1 = o.x + 3; x2 = o.x + o.w - 3; y1 = o.y - 16; y2 = o.y; }
+      else if (o.t === "crate") { x1 = o.x; x2 = o.x + o.w; y1 = o.y - o.w; y2 = o.y; }
+      else if (o.t === "saw") { const sx = sawX(o); x1 = sx - 11; x2 = sx + 11; y1 = o.y - 24; y2 = o.y - 2; }
+      else { const my = mineY(o); x1 = o.cx - 10; x2 = o.cx + 10; y1 = my - 10; y2 = my + 10; }
+      if (a < x2 && b > x1 && c < y2 && d > y1) return true;
+    }
+    return false;
+  }
+
   function update() {
     const h = hero; h.t++;
-    if (h.grounded) { h.vx = 0; h.vy = 0; }
-    else {
+    if (h.grounded) {
+      h.vx = run(); h.vy = 0; h.x += h.vx;
+      if (h.x > h.plat.x + h.plat.w + 3) { h.grounded = false; h.plat = null; }
+    } else {
       h.vy += GRAV;
       if (h.anchor && pulling) { h.rope = Math.max(MIN_ROPE, h.rope - 3); h.vx *= 1.006; }
       const py = h.y;
@@ -148,14 +193,16 @@
       }
       if (h.vy >= 0) for (const p of plats) {
         if (h.x > p.x - 6 && h.x < p.x + p.w + 6 && py <= p.y + 2 && h.y >= p.y) {
-          h.y = p.y; h.grounded = true; h.anchor = null; burst(h.x, h.y, "#7dd3fc", 10);
+          h.y = p.y; h.grounded = true; h.plat = p; h.anchor = null; h.vx = run();
+          burst(h.x, h.y, "#7dd3fc", 10);
           if (!p.counted) { p.counted = true; score++; $("score").textContent = score; toast("PLATFORM CLEARED +1"); }
           break;
         }
       }
     }
-    if (h.y > H + 120) endGame();
+    if (hit() || h.y > H + 120) { endGame(); return; }
     while (plats[plats.length - 1].x < h.x + 1600) addPlatform();
+    if (h.t % 120 === 0) obs = obs.filter(o => (o.x !== undefined ? o.x : o.cx) > cam - 300);
     cam += (h.x - W * .3 - cam) * .1;
     parts.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; });
     parts = parts.filter(p => p.life > 0);
@@ -169,8 +216,45 @@
     ctx.shadowBlur = 0;
   }
 
+  function spikes(x, y, w) {
+    ctx.fillStyle = "#ff4d6d"; ctx.shadowColor = "#ff4d6d"; ctx.shadowBlur = 10;
+    for (let i = 0; i < 3; i++) {
+      const sx = x + i * (w / 3);
+      ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(sx + w / 6, y - 20); ctx.lineTo(sx + w / 3, y); ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+  }
+  function spiky(x, y, r, color, rot) {
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 12; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y, r * .6, 0, 6.28); ctx.fill();
+    for (let i = 0; i < 8; i++) {
+      const a = rot + i * .785;
+      ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * r * .6, y + Math.sin(a) * r * .6);
+      ctx.lineTo(x + Math.cos(a) * r * 1.1, y + Math.sin(a) * r * 1.1); ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  function drawObs() {
+    for (const o of obs) {
+      if (o.t === "spike") { if (o.x - cam > -60 && o.x - cam < W + 60) spikes(o.x - cam, o.y, o.w); }
+      else if (o.t === "crate") {
+        const x = o.x - cam; if (x < -60 || x > W + 60) continue;
+        ctx.fillStyle = "#3a2410"; ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 2;
+        ctx.fillRect(x, o.y - o.w, o.w, o.w); ctx.strokeRect(x, o.y - o.w, o.w, o.w);
+        ctx.beginPath(); ctx.moveTo(x, o.y - o.w); ctx.lineTo(x + o.w, o.y); ctx.moveTo(x + o.w, o.y - o.w); ctx.lineTo(x, o.y); ctx.stroke();
+      } else if (o.t === "saw") {
+        const x = sawX(o) - cam; if (x < -60 || x > W + 60) continue;
+        spiky(x, o.y - 13, 13, "#f43f5e", hero.t * .3);
+      } else {
+        const x = o.cx - cam; if (x < -60 || x > W + 60) continue;
+        spiky(x, mineY(o), 11, "#ff9f1c", hero.t * .05);
+      }
+    }
+  }
+
   function drawHero(h) {
-    const x = h.x - cam, y = h.y, sw = h.grounded ? 0 : Math.sin(h.t * .2) * 8;
+    const x = h.x - cam, y = h.y, sw = Math.sin(h.t * (h.grounded ? .35 : .15)) * 8;
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.lineCap = "round";
     ctx.beginPath(); ctx.arc(x, y - 36, 6, 0, 6.28); ctx.stroke();
     ctx.beginPath();
@@ -178,7 +262,7 @@
     ctx.moveTo(x, y - 14); ctx.lineTo(x - 6 + sw, y);
     ctx.moveTo(x, y - 14); ctx.lineTo(x + 6 - sw, y);
     if (h.anchor) { ctx.moveTo(x, y - 26); ctx.lineTo(h.anchor.x - cam, h.anchor.y); }
-    else { ctx.moveTo(x, y - 26); ctx.lineTo(x - 8, y - 18); ctx.moveTo(x, y - 26); ctx.lineTo(x + 8, y - 18); }
+    else { ctx.moveTo(x, y - 26); ctx.lineTo(x - 8 + sw / 2, y - 18); ctx.moveTo(x, y - 26); ctx.lineTo(x + 8 - sw / 2, y - 18); }
     ctx.stroke();
   }
 
@@ -203,7 +287,8 @@
       const inRange = Math.hypot(hero.x - a.x, hero.y - 18 - a.y) <= MAX_RANGE;
       ring(x, a.y, 20, hero.anchor === a ? "#ffd76a" : inRange ? "#63f1ff" : "#3b5b8c", inRange);
     }
-    drawHero(hero);
+    drawObs();
+    if (!over) drawHero(hero);
     for (const p of parts) {
       ctx.globalAlpha = p.life / 30; ctx.fillStyle = p.color;
       ctx.fillRect(p.x - cam, p.y, 3, 3);
@@ -211,7 +296,10 @@
     ctx.globalAlpha = 1;
   }
 
-  function loop() { if (!over) update(); draw(); requestAnimationFrame(loop); }
+  function loop() {
+    if (!over) update(); else { parts.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; }); parts = parts.filter(p => p.life > 0); }
+    draw(); requestAnimationFrame(loop);
+  }
   reset(); loop();
 })();
 </script>
