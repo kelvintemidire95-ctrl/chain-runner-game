@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Stick Hero: Chain Runner</title>
+<style>
+  html,body{margin:0;height:100%;background:#050b1f;overflow:hidden;font-family:system-ui,sans-serif;
+    -webkit-user-select:none;user-select:none;touch-action:none}
+  canvas{display:block;width:100%;height:100%}
+  .hud{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;padding:14px 16px;
+    color:#7dd3fc;letter-spacing:.2em;font-size:12px;pointer-events:none}
+  .hud b{display:block;font-size:26px;color:#38bdf8;letter-spacing:0}
+  #toast{position:absolute;top:80px;width:100%;text-align:center;color:#fde68a;font-weight:700;
+    letter-spacing:.15em;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none}
+  .btns{position:absolute;bottom:22px;left:0;right:0;display:flex;justify-content:space-between;padding:0 20px}
+  .btn{width:130px;height:64px;border-radius:16px;border:2px solid #38bdf8;background:rgba(56,189,248,.15);
+    color:#e0f2fe;font-weight:700;letter-spacing:.15em;font-size:14px}
+  .btn:active{background:rgba(56,189,248,.45)}
+  #over{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+    background:rgba(2,6,23,.8);color:#e0f2fe;text-align:center}
+  #over h1{margin:0 0 6px;letter-spacing:.2em;color:#38bdf8}
+  #over button{margin-top:18px;padding:14px 34px;border-radius:14px;border:2px solid #38bdf8;
+    background:transparent;color:#e0f2fe;font-weight:700;letter-spacing:.15em;font-size:15px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud">
+  <div>CHAIN RUNNER<div style="opacity:.7;font-size:10px;margin-top:4px">GRAPPLE · SWING · GLIDE</div></div>
+  <div style="text-align:right">PLATFORMS<b id="score">0</b></div>
+</div>
+<div id="toast"></div>
+<div class="btns">
+  <button class="btn" id="pull">PULL</button>
+  <button class="btn" id="rel">RELEASE</button>
+</div>
+<div id="over">
+  <h1>GAME OVER</h1>
+  <div>Platforms: <b id="fs">0</b> · Best: <b id="bs">0</b></div>
+  <button id="again">PLAY AGAIN</button>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+  const $ = id => document.getElementById(id);
+  const H = 600, GROUND = 430, GRAV = .45, MAX_RANGE = 440, MIN_ROPE = 50;
+  let W, S, cam, hero, plats, anchors, parts, score, best = 0, pulling, over, toastT;
+
+  try { best = +localStorage.getItem("chainBest") || 0; } catch (e) {}
+
+  function resize() {
+    cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio;
+    S = cv.height / H; W = cv.width / S;
+  }
+  addEventListener("resize", resize); resize();
+
+  function toast(t) {
+    const e = $("toast"); e.textContent = t; e.style.opacity = 1;
+    clearTimeout(toastT); toastT = setTimeout(() => e.style.opacity = 0, 1100);
+  }
+  function burst(x, y, color, n) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * 6.28, s = 1 + Math.random() * 3;
+      parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 30, color });
+    }
+  }
+
+  function addPlatform() {
+    const last = plats[plats.length - 1];
+    const gap = 110 + Math.random() * 80 + Math.min(score * 4, 80);
+    const w = 180 + Math.random() * 140;
+    const x = last.x + last.w + gap;
+    const y = Math.max(340, Math.min(480, last.y + (Math.random() - .5) * 90));
+    plats.push({ x, y, w, counted: false });
+    anchors.push({ x: last.x + last.w + gap / 2, y: Math.min(last.y, y) - 150 - Math.random() * 40 });
+  }
+
+  function reset() {
+    plats = [{ x: -200, y: GROUND, w: 500, counted: true }];
+    anchors = []; parts = []; score = 0; pulling = false; over = false;
+    hero = { x: 250, y: GROUND, vx: 0, vy: 0, grounded: true, anchor: null, rope: 0, face: 1, t: 0 };
+    cam = 0;
+    while (plats[plats.length - 1].x < 1800) addPlatform();
+    $("score").textContent = 0; $("over").style.display = "none";
+    toast("TAP AN ANCHOR TO GRAPPLE");
+  }
+
+  function attach(a) {
+    const d = Math.hypot(hero.x - a.x, hero.y - 18 - a.y);
+    if (d > MAX_RANGE) { toast("ANCHOR OUT OF RANGE"); return; }
+    hero.anchor = a; hero.rope = Math.max(MIN_ROPE, d); hero.grounded = false;
+    burst(a.x, a.y, "#63f1ff", 18); toast("CHAIN ATTACHED");
+  }
+  function detach() {
+    if (!hero.anchor) return;
+    burst(hero.x, hero.y - 18, "#ffd76a", 8);
+    hero.anchor = null; toast("CHAIN RELEASED");
+  }
+
+  cv.addEventListener("pointerdown", e => {
+    if (over) return;
+    const r = cv.getBoundingClientRect();
+    const px = (e.clientX - r.left) * devicePixelRatio / S + cam;
+    const py = (e.clientY - r.top) * devicePixelRatio / S;
+    let pick = null, bd = 70;
+    for (const a of anchors) {
+      const d = Math.hypot(a.x - px, a.y - py);
+      if (d < bd) { bd = d; pick = a; }
+    }
+    if (pick) attach(pick);
+  });
+
+  const pb = $("pull"), rb = $("rel");
+  pb.addEventListener("pointerdown", e => { e.preventDefault(); pulling = true; });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => pb.addEventListener(ev, () => pulling = false));
+  rb.addEventListener("pointerdown", e => { e.preventDefault(); detach(); });
+  addEventListener("keydown", e => {
+    if (e.code === "Space") { pulling = true; e.preventDefault(); }
+    if (e.code === "KeyE") detach();
+  });
+  addEventListener("keyup", e => { if (e.code === "Space") pulling = false; });
+  $("again").addEventListener("click", reset);
+
+  function endGame() {
+    over = true;
+    if (score > best) { best = score; try { localStorage.setItem("chainBest", best); } catch (e) {} }
+    $("fs").textContent = score; $("bs").textContent = best; $("over").style.display = "flex";
+  }
+
+  function update() {
+    const h = hero; h.t++;
+    if (h.grounded) { h.vx = 0; h.vy = 0; }
+    else {
+      h.vy += GRAV;
+      if (h.anchor && pulling) { h.rope = Math.max(MIN_ROPE, h.rope - 3); h.vx *= 1.006; }
+      const py = h.y;
+      h.x += h.vx; h.y += h.vy;
+      if (h.anchor) {
+        const a = h.anchor, dx = h.x - a.x, dy = h.y - 18 - a.y, d = Math.hypot(dx, dy) || 1;
+        if (d > h.rope) {
+          const nx = dx / d, ny = dy / d;
+          h.x = a.x + nx * h.rope; h.y = a.y + ny * h.rope + 18;
+          const vr = h.vx * nx + h.vy * ny;
+          if (vr > 0) { h.vx -= vr * nx; h.vy -= vr * ny; }
+        }
+      }
+      if (h.vy >= 0) for (const p of plats) {
+        if (h.x > p.x - 6 && h.x < p.x + p.w + 6 && py <= p.y + 2 && h.y >= p.y) {
+          h.y = p.y; h.grounded = true; h.anchor = null; burst(h.x, h.y, "#7dd3fc", 10);
+          if (!p.counted) { p.counted = true; score++; $("score").textContent = score; toast("PLATFORM CLEARED +1"); }
+          break;
+        }
+      }
+    }
+    if (h.y > H + 120) endGame();
+    while (plats[plats.length - 1].x < h.x + 1600) addPlatform();
+    cam += (h.x - W * .3 - cam) * .1;
+    parts.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; });
+    parts = parts.filter(p => p.life > 0);
+  }
+
+  function ring(x, y, r, color, active) {
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowColor = color; ctx.shadowBlur = 14;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.28); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, r * .45, 0, 6.28); ctx.stroke();
+    if (active) { ctx.beginPath(); ctx.arc(x, y, r * 1.4, 0, 6.28); ctx.stroke(); }
+    ctx.shadowBlur = 0;
+  }
+
+  function drawHero(h) {
+    const x = h.x - cam, y = h.y, sw = h.grounded ? 0 : Math.sin(h.t * .2) * 8;
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(x, y - 36, 6, 0, 6.28); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, y - 30); ctx.lineTo(x, y - 14);
+    ctx.moveTo(x, y - 14); ctx.lineTo(x - 6 + sw, y);
+    ctx.moveTo(x, y - 14); ctx.lineTo(x + 6 - sw, y);
+    if (h.anchor) { ctx.moveTo(x, y - 26); ctx.lineTo(h.anchor.x - cam, h.anchor.y); }
+    else { ctx.moveTo(x, y - 26); ctx.lineTo(x - 8, y - 18); ctx.moveTo(x, y - 26); ctx.lineTo(x + 8, y - 18); }
+    ctx.stroke();
+  }
+
+  function draw() {
+    ctx.setTransform(S, 0, 0, S, 0, 0);
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#0a1a4a"); g.addColorStop(1, "#060d26");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#0a1535";
+    for (let i = -2; i < W / 90 + 3; i++) {
+      const bx = i * 90 - (cam * .3 % 90), th = 90 + ((i * 37) % 5) * 18;
+      ctx.beginPath(); ctx.moveTo(bx, GROUND + 30); ctx.lineTo(bx + 30, GROUND + 30 - th); ctx.lineTo(bx + 60, GROUND + 30); ctx.fill();
+    }
+    for (const p of plats) {
+      const x = p.x - cam; if (x > W || x + p.w < 0) continue;
+      ctx.fillStyle = "#0b1f3f"; ctx.fillRect(x, p.y, p.w, H - p.y);
+      ctx.fillStyle = "#38bdf8"; ctx.shadowColor = "#38bdf8"; ctx.shadowBlur = 12;
+      ctx.fillRect(x, p.y, p.w, 4); ctx.shadowBlur = 0;
+    }
+    for (const a of anchors) {
+      const x = a.x - cam; if (x < -50 || x > W + 50) continue;
+      const inRange = Math.hypot(hero.x - a.x, hero.y - 18 - a.y) <= MAX_RANGE;
+      ring(x, a.y, 20, hero.anchor === a ? "#ffd76a" : inRange ? "#63f1ff" : "#3b5b8c", inRange);
+    }
+    drawHero(hero);
+    for (const p of parts) {
+      ctx.globalAlpha = p.life / 30; ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - cam, p.y, 3, 3);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function loop() { if (!over) update(); draw(); requestAnimationFrame(loop); }
+  reset(); loop();
+})();
+</script>
+</body>
+</html>
